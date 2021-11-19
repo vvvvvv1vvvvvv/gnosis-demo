@@ -1,16 +1,22 @@
 import React, { useEffect, useState } from "react";
-import { toChecksumAddress } from "web3-utils";
-import axios from "axios";
-import { ethers } from "ethers";
+import { ethers, Contract } from "ethers";
 import { Table, Button, Modal } from "antd";
 import Safe, {
   EthersAdapter,
   EthSignSignature,
+  SafeFactory
 } from "@gnosis.pm/safe-core-sdk";
 import { intToHex } from "ethereumjs-util";
+import {
+  getSafeSingletonDeployment,
+  getProxyFactoryDeployment
+} from '@gnosis.pm/safe-deployments';
+import MySafe from './gnosis'
 import "antd/dist/antd.min.css";
 
 const { Column } = Table;
+
+console.log(getProxyFactoryDeployment({ version: '1.1.1' }))
 
 export const EMPTY_DATA = "0x";
 
@@ -22,6 +28,11 @@ export const sameString = (str1, str2) => {
   return str1.toLowerCase() === str2.toLowerCase();
 };
 
+const provider = new ethers.providers.Web3Provider(
+  window.web3.currentProvider
+);
+const safe = new MySafe('0xC6691AC88df8f4fdC20c1d9170dc76e851Df1541', '1.1.1', provider)
+
 function App() {
   const [currentAddress, setCurrentAddress] = useState(null);
   const [txs, setTxs] = useState([]);
@@ -29,92 +40,23 @@ function App() {
   const [txDetail, setTxDetail] = useState("");
   const [safeInfo, setSafeInfo] = useState(null);
 
-  const postTransaction = (address, data) => {
-    return axios.post(
-      `https://safe-transaction.gnosis.io/api/v1/safes/${toChecksumAddress(
-        "0x9f18623f08eeBEcAEa7A404C9A6Cc451994fA4Dc"
-      )}/multisig-transactions/`,
-      data
-    );
-  };
-
-  const confirmTransaction = (hash, data) => {
-    return axios.post(
-      `https://safe-transaction.gnosis.io/api/v1/multisig-transactions/${hash}/confirmations/`,
-      data
-    );
-  };
-
-  const getTransactions = () => {
-    return axios.get(
-      `https://safe-transaction.gnosis.io/api/v1/safes/0x9f18623f08eeBEcAEa7A404C9A6Cc451994fA4Dc/multisig-transactions/`
-    );
-  };
-
-  const getSafeInfo = () => {
-    return axios.get(
-      "https://safe-transaction.gnosis.io/api/v1/safes/0x9f18623f08eeBEcAEa7A404C9A6Cc451994fA4Dc/"
-    );
-  };
-
   const handleClick = async () => {
-    const provider = new ethers.providers.Web3Provider(
-      window.web3.currentProvider
-    );
-    const owner1 = provider.getSigner(0);
-    const accounts = await owner1.provider.listAccounts();
-    const ethAdapterOwner1 = new EthersAdapter({
-      ethers,
-      signer: owner1,
-    });
-    const safeAddress = "0x9f18623f08eeBEcAEa7A404C9A6Cc451994fA4Dc";
-    const safeSdk = await Safe.create({
-      ethAdapter: ethAdapterOwner1,
-      safeAddress,
-    });
-    const safeTransaction = await safeSdk.createTransaction({
+    const tx = {
       to: "0x5853ed4f26a3fcea565b3fbc698bb19cdf6deb85",
       value: "0x38d7ea4c68000",
       data: "0x",
-    });
-    await safeSdk.signTransaction(safeTransaction);
-    const hash = await safeSdk.getTransactionHash(safeTransaction);
-    await postTransaction(safeAddress, {
-      safe: toChecksumAddress(safeAddress),
-      to: toChecksumAddress(safeTransaction.data.to),
-      value: Number(safeTransaction.data.value),
-      data: safeTransaction.data.data,
-      operation: safeTransaction.data.operation,
-      gasToken: safeTransaction.data.gasToken,
-      safeTxGas: safeTransaction.data.safeTxGas,
-      baseGas: safeTransaction.data.baseGas,
-      gasPrice: safeTransaction.data.gasPrice,
-      refundReceiver: safeTransaction.data.refundReceiver,
-      nonce: safeTransaction.data.nonce,
-      contractTransactionHash: hash,
-      sender: toChecksumAddress(accounts[0]),
-      signature: safeTransaction.signatures.get(
-        accounts[0].toLowerCase()
-      ).data,
-    });
+    }
+    const safeTransaction = await safe.buildTransaction(tx);
+    const hash = await safe.getTransactionHash(safeTransaction);
+    const sig = await safe.signTransactionHash(hash);
+    safeTransaction.addSignature(sig);
+
+    await safe.postTransaction(safeTransaction, hash)
     init();
   };
 
   const handleConfirm = async (tx) => {
-    const provider = new ethers.providers.Web3Provider(
-      window.web3.currentProvider
-    );
-    const owner1 = provider.getSigner(0);
-    const ethAdapterOwner1 = new EthersAdapter({
-      ethers,
-      signer: owner1,
-    });
-    const safeAddress = "0x9f18623f08eeBEcAEa7A404C9A6Cc451994fA4Dc";
-    const safeSdk = await Safe.create({
-      ethAdapter: ethAdapterOwner1,
-      safeAddress,
-    });
-    const safeTransaction = await safeSdk.createTransaction({
+    const safeTransaction = await safe.buildTransaction({
       gasPrice: tx.gasPrice,
       gasToken: tx.gasToken,
       nonce: tx.nonce,
@@ -126,12 +68,7 @@ function App() {
       baseGas: tx.baseGas,
       operation: tx.operation,
     });
-    await safeSdk.signTransaction(safeTransaction);
-    const hash = await safeSdk.getTransactionHash(safeTransaction);
-    const signature = safeTransaction.signatures.get(
-      currentAddress.toLowerCase()
-    ).data;
-    await confirmTransaction(hash, { signature });
+    await safe.confirmTransaction(safeTransaction);
     init();
   };
 
@@ -166,20 +103,7 @@ function App() {
   };
 
   const handleExecute = async (tx) => {
-    const provider = new ethers.providers.Web3Provider(
-      window.web3.currentProvider
-    );
-    const owner1 = provider.getSigner(0);
-    const ethAdapterOwner1 = new EthersAdapter({
-      ethers,
-      signer: owner1,
-    });
-    const safeAddress = "0x9f18623f08eeBEcAEa7A404C9A6Cc451994fA4Dc";
-    const safeSdk = await Safe.create({
-      ethAdapter: ethAdapterOwner1,
-      safeAddress,
-    });
-    const safeTransaction = await safeSdk.createTransaction({
+    const safeTransaction = await safe.buildTransaction({
       gasPrice: tx.gasPrice,
       gasToken: tx.gasToken,
       nonce: tx.nonce,
@@ -199,11 +123,7 @@ function App() {
         })
       );
     }
-    const safeSdk3 = await safeSdk.connect({
-      ethAdapter: ethAdapterOwner1,
-      safeAddress,
-    });
-    await safeSdk3.executeTransaction(safeTransaction);
+    await safe.executeTransaction(safeTransaction);
   };
 
   const init = async () => {
@@ -212,11 +132,11 @@ function App() {
       params: [],
     });
     window.ethereum.on('accountsChanged', init);
-    const info = await getSafeInfo();
-    const { data } = await getTransactions();
+    const { results } = await safe.getPendingTransactions();
+    const safeInfo = await safe.getSafeInfo();
+    setSafeInfo(safeInfo)
     setCurrentAddress(res[0]);
-    setSafeInfo(info.data);
-    setTxs(data.results);
+    setTxs(results);
   };
 
   useEffect(() => {
